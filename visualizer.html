@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Visualizer - P5.js</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/addons/p5.sound.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: black;
+        }
+    </style>
+</head>
+<body>
+    <script>
+        // Audio processing
+        let song;
+        let fft;
+        let logo;
+
+        // Configuration constants  
+        const NUM_RADIUS_VALUES = 40;
+        const NUM_SPOKES = 12;
+        const NUM_RINGS = 18;
+        const SPECTRUM_SCALE = 600;
+        const FREQUENCY_LERP = 0.25; // MUCH faster - was 0.0175
+        const RADIUS_LERP = 0.15; // MUCH faster - was 0.0075
+        const DISTANCE_SCALE = 5;
+        const CIRCLE_SCALE = 3;
+        const OVER_OFFSET = 50;
+        const BASE_TRANSLATE = 200;
+
+        // Dynamic variables
+        let radiusValues = new Array(NUM_RADIUS_VALUES).fill(0);
+        let targetJump = 1;
+        let rotationCounter = 0;
+        let playing = false;
+        let audioStarted = false;
+        let prevSum = 0; // For beat detection
+
+        // UI and transition variables
+        let showEnterButton = true;
+        let transitioning = false;
+        let transitionStartTime = 0;
+        let buttonScale = 1.0;
+        let buttonPulse = 0;
+        let buttonSpin = 0;
+        let redButtonPulse = 0;
+        let windowScale = 0;
+        let musicStopped = false;
+        let mouseOverButton = false;
+        let showPlayButton = true;
+        let visualizerStarted = false;
+        let transitionComplete = false;
+
+        function preload() {
+            // Load audio file and logo with better error handling
+            song = loadSound('yoga_pants.mp3', 
+                () => console.log("✅ Audio loaded successfully"),
+                (err) => {
+                    console.log("❌ Audio file not found:", err);
+                    song = null;
+                }
+            );
+            
+            // Load PNG logo
+            console.log("🔍 Loading logo.png...");
+            logo = loadImage('logo.png',
+                (img) => {
+                    console.log("✅ PNG logo loaded successfully:", img.width, "x", img.height);
+                }, 
+                (err) => {
+                    console.log("❌ PNG logo failed to load:", err);
+                    console.log("💡 Make sure logo.png is in the same folder as the HTML file");
+                    logo = null;
+                }
+            );
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+            console.log("Canvas resized to:", windowWidth, "x", windowHeight);
+        }
+
+        function setup() {
+            let canvas = createCanvas(windowWidth, windowHeight);
+            
+            // Add mouse event directly to canvas
+            canvas.mousePressed(() => {
+                console.log("=== CANVAS MOUSE CLICK ===");
+                handleMouseClick();
+            });
+            
+            // Performance optimization
+            pixelDensity(1); // Prevent high-DPI performance issues
+            
+            // Initialize FFT
+            fft = new p5.FFT(0.8, 512);
+            
+            // Since audio auto-starts, go directly to visualizer mode
+            visualizerStarted = true;
+            showPlayButton = false;
+            showEnterButton = true;
+            
+            // Try to auto-start audio
+            if (song && song.isLoaded && song.isLoaded()) {
+                try {
+                    song.loop();
+                    audioStarted = true;
+                    fft.setInput(song);
+                    console.log("🎵 Audio auto-started successfully");
+                } catch(e) {
+                    console.log("Audio auto-start failed, will use simulation");
+                }
+            } else {
+                console.log("Audio not available, using simulation");
+            }
+            
+            console.log("🚀 Setup complete - interactive portfolio ready!");
+            console.log("💡 Controls: Click to advance • R to reset • V to toggle intensity • 1/2/3 for sections");
+        }
+
+        function handleMouseClick() {
+            console.log("=== MOUSE CLICK HANDLER ===");
+            console.log("Mouse clicked at:", mouseX, mouseY);
+            console.log("visualizerStarted:", visualizerStarted);
+            console.log("transitioning:", transitioning);
+            console.log("transitionComplete:", transitionComplete);
+            
+            // Handle clicks in final portfolio window
+            if (transitionComplete) {
+                let centerX = width/2;
+                let centerY = height/2;
+                
+                // Check portfolio section clicks
+                let sections = [
+                    { title: "Interactive Experiences", y: centerY - 20 },
+                    { title: "Creative Coding", y: centerY + 60 },
+                    { title: "Full-Stack Development", y: centerY + 140 }
+                ];
+                
+                for (let i = 0; i < sections.length; i++) {
+                    if (dist(mouseX, mouseY, centerX, sections[i].y) < 200) {
+                        console.log("Portfolio section clicked:", sections[i].title);
+                        // You can add navigation logic here
+                        return;
+                    }
+                }
+                
+                // Check button clicks
+                let buttons = [
+                    { label: "View Portfolio", x: centerX - 120, y: centerY + 180, url: "https://your-portfolio.com" },
+                    { label: "Contact Me", x: centerX, y: centerY + 180, url: "mailto:your@email.com" },
+                    { label: "Download CV", x: centerX + 120, y: centerY + 180, url: "#" }
+                ];
+                
+                for (let btn of buttons) {
+                    if (dist(mouseX, mouseY, btn.x, btn.y) < 50) {
+                        console.log("Button clicked:", btn.label);
+                        if (btn.url.startsWith('http') || btn.url.startsWith('mailto:')) {
+                            window.open(btn.url, '_blank');
+                        }
+                        return;
+                    }
+                }
+                
+                return;
+            }
+            
+            // Original visualizer click logic
+            if (visualizerStarted && !transitioning && !transitionComplete) {
+                console.log("STARTING TRANSITION - stopping music and advancing to portfolio");
+                
+                transitioning = true;
+                transitionStartTime = millis();
+                
+                console.log("Transition state set - transitioning:", transitioning);
+                console.log("Transition start time:", transitionStartTime);
+                
+                if (song && song.isPlaying()) {
+                    song.pause();
+                    console.log("Audio paused - visualizer should collapse");
+                }
+                
+                console.log("Transition to portfolio started!");
+                return;
+            }
+            
+            console.log("No action taken - unexpected state");
+        }
+
+        function draw() {
+            background(0);
+            
+            // DEBUG: Log current state
+            if (frameCount % 60 === 0) { // Every second
+                console.log("DRAW STATE CHECK - transitioning:", transitioning, "transitionComplete:", transitionComplete);
+            }
+            
+            // Stage 1: Show play button
+            if (showPlayButton) {
+                drawPlayButton();
+                return; // Don't draw anything else
+            }
+            
+            // Stage 2: Visualizer running with button
+            if (visualizerStarted && !transitioning && !transitionComplete) {
+                // Get audio data or simulate
+                if (audioStarted && song && song.isPlaying()) {
+                    let spectrum = fft.analyze();
+                    
+                    // Beat detection approach - look for sudden changes
+                    let sum = 0;
+                    for (let i = 6; i < 30; i++) {
+                        sum += spectrum[i];
+                    }
+                    
+                    // Calculate the CHANGE/DIFFERENCE instead of absolute value
+                    let diff = Math.abs(sum - prevSum);
+                    prevSum = sum;
+                    
+                    // EVEN MORE dramatic scaling for bouncy effect
+                    targetJump = diff / 1.5;
+                    
+                    // Higher baseline too
+                    let baseline = (sum / 24) / 10;
+                    targetJump = Math.max(targetJump, baseline);
+                    
+                    // Boost ALL movements more for bouncy effect
+                    targetJump *= 1.8;
+                } else {
+                    // Simulate with bouncy values
+                    targetJump = 50 + sin(frameCount * 0.2) * 40 + random(-10, 10);
+                }
+                
+                rotationCounter++;
+                updateRadiusValues();
+                drawVisualizer();
+                drawBeautifulButton(); // Use the beautiful button
+                return;
+            }
+            
+            // Stage 3: Transition (visualizer dies, button shrinks, window grows)
+            if (transitioning) {
+                console.log("DRAW: In transition phase - INLINE TRANSITION LOGIC");
+                
+                let elapsed = millis() - transitionStartTime;
+                console.log("Transition elapsed:", elapsed);
+                
+                // Phase 1: Visualizer fades + button shrinks (0-500ms)
+                if (elapsed < 500) {
+                    console.log("INLINE Phase 1: Fading visualizer and button");
+                    targetJump = 0; // Kill the visualizer energy
+                    updateRadiusValues(); // Update the spring physics
+                    drawVisualizer(); // Will fade out due to alpha
+                    drawBeautifulButton(); // Use the beautiful button during transition
+                }
+                // Phase 2: Window grows (500-2000ms)  
+                else if (elapsed < 2000) {
+                    console.log("INLINE Phase 2: Growing window");
+                    let windowGrowTime = elapsed - 500;
+                    windowScale = map(windowGrowTime, 0, 1500, 0, 1);
+                    windowScale = constrain(windowScale, 0, 1);
+                    
+                    // Smoothstep easing
+                    windowScale = windowScale * windowScale * (3.0 - 2.0 * windowScale);
+                    
+                    console.log("INLINE Drawing expanding window, scale:", windowScale);
+                    drawExpandingWindow();
+                }
+                // Phase 3: Complete - STAY IN PORTFOLIO MODE
+                else {
+                    console.log("INLINE Phase 3: Transition complete - STAYING IN PORTFOLIO MODE");
+                    transitioning = false;
+                    transitionComplete = true;
+                    windowScale = 1.0; // Ensure it's fully open
+                    
+                    // KEEP AUDIO OFF
+                    if (song && song.isPlaying()) {
+                        song.pause();
+                        console.log("FORCING audio to stay OFF");
+                    }
+                }
+                return;
+            }
+            
+            // Stage 4: Final window (stays here)
+            if (transitionComplete) {
+                console.log("DRAW: Drawing final window");
+                drawFinalWindow();
+                return;
+            }
+            
+            // Fallback
+            console.log("DRAW: No state matched - this shouldn't happen!");
+        }
+
+        function updateRadiusValues() {
+            // Preserve the original cascading spring effect
+            radiusValues[0] = abs(lerp(radiusValues[0], targetJump, RADIUS_LERP));
+            
+            for (let j = 1; j < NUM_RADIUS_VALUES; j++) {
+                radiusValues[j] = abs(lerp(radiusValues[j], radiusValues[j-1], FREQUENCY_LERP));
+            }
+        }
+
+        function drawRotatingSpokes(rotationSpeed, reverse) {
+            push();
+            rotateZ(radians(rotationSpeed));
+            
+            for (let u = 0; u < NUM_SPOKES; u++) {
+                push();
+                rotateZ(radians(30 * u));
+                rotateZ(radians(90));
+                
+                noFill();
+                strokeWeight(2);
+                translate(BASE_TRANSLATE, 0);
+                
+                // Draw rectangles along each spoke
+                for (let i = 0; i < NUM_RADIUS_VALUES; i++) {
+                    push();
+                    
+                    // Calculate color based on position and radius value
+                    let strokeColor = calculateStrokeColor(i, radiusValues[i]);
+                    stroke(strokeColor);
+                    
+                    // Calculate position and size
+                    let xPos = reverse ? -radiusValues[i] * DISTANCE_SCALE + OVER_OFFSET * (i + 1) 
+                                       : radiusValues[i] * DISTANCE_SCALE + OVER_OFFSET * (i + 1);
+                    let yPos = OVER_OFFSET * (i + 1);
+                    
+                    translate(xPos, yPos, 0);
+                    
+                    // Size calculation
+                    let rectSize = reverse ? radiusValues[NUM_RADIUS_VALUES - 1 - i] / 2 
+                                           : radiusValues[i];
+                    
+                    rect(-rectSize/2, -rectSize/2, rectSize, rectSize);
+                    
+                    pop();
+                }
+                
+                pop();
+            }
+            
+            pop();
+        }
+
+        function drawCentralRings() {
+            push();
+            rotateZ(radians(rotationCounter / 4.0));
+            
+            for (let j = 0; j < NUM_SPOKES; j++) {
+                push();
+                
+                for (let i = 6; i < 24; i++) {
+                    push();
+                    rotateZ(radians(360.0 / NUM_RINGS * i));
+                    rotateX(radians(90));
+                    rotateY(radians(90));
+                    
+                    noFill();
+                    
+                    // Draw multiple rings with different radii
+                    drawRingElements(i);
+                    
+                    pop();
+                }
+                
+                pop();
+            }
+            
+            pop();
+        }
+
+        function drawRingElements(ringIndex) {
+            let divisors = [5, 6, 7, 8, 1, 3];
+            let radiusIndices = [0, 1, 2, 3, 4, 4];
+            
+            for (let elem = 0; elem < 6; elem++) {
+                push();
+                
+                let strokeColor = calculateRingColor(ringIndex, elem, radiusValues[radiusIndices[elem]]);
+                stroke(strokeColor);
+                
+                translate(0, 0, -radiusValues[radiusIndices[elem]] * DISTANCE_SCALE);
+                
+                let size = (elem == 4) ? 40 * CIRCLE_SCALE : 
+                           radiusValues[radiusIndices[elem]] / divisors[elem] * CIRCLE_SCALE;
+                
+                rect(-size/2, -size/2, size, size);
+                
+                pop();
+            }
+        }
+
+        function calculateStrokeColor(index, radiusValue) {
+            if (index < 17) {
+                if (index % 2 == 0) {
+                    return color(0, radiusValue * DISTANCE_SCALE / 3, 255);
+                } else {
+                    return color(radiusValue * DISTANCE_SCALE / 3, 0, 255);
+                }
+            } else {
+                return color(0, 0, 255);
+            }
+        }
+
+        function calculateRingColor(ringIndex, elementIndex, radiusValue) {
+            if (elementIndex % 2 == 0) {
+                return color(ringIndex, radiusValue * DISTANCE_SCALE / 3, 255);
+            } else {
+                return color(radiusValue * DISTANCE_SCALE / 3, ringIndex, 255);
+            }
+        }
+
+        function drawPlayButton() {
+            // Check hover for play button
+            let distance = dist(mouseX, mouseY, width/2, height/2);
+            let isHovering = distance < 60;
+            
+            push();
+            translate(width/2, height/2);
+            
+            // Hover effect
+            let buttonColor = isHovering ? color(0, 200, 255) : color(0, 100, 200);
+            let buttonSize = isHovering ? 130 : 120;
+            
+            // Play button background circle
+            fill(red(buttonColor), green(buttonColor), blue(buttonColor), 150);
+            stroke(0, 150, 255);
+            strokeWeight(isHovering ? 4 : 3);
+            ellipse(0, 0, buttonSize, buttonSize);
+            
+            // Triangle play icon
+            fill(255);
+            noStroke();
+            let triSize = isHovering ? 1.1 : 1.0;
+            triangle(
+                -15 * triSize, -20 * triSize,  // Top left
+                -15 * triSize, 20 * triSize,   // Bottom left  
+                25 * triSize, 0      // Right point
+            );
+            
+            // Text below
+            fill(255, 200);
+            textAlign(CENTER, CENTER);
+            textSize(14);
+            text("Click to Start", 0, 80);
+            
+            pop();
+        }
+
+        function drawVisualizer() {
+            push();
+            translate(width/2, height/2);
+            scale(0.4);
+            rotate(rotationCounter / -4.0 * PI / 180);
+            
+            // Apply fade out during transition
+            let alpha = 255;
+            if (transitioning) {
+                let elapsed = millis() - transitionStartTime;
+                alpha = map(elapsed, 0, 500, 255, 0);
+                alpha = constrain(alpha, 0, 255);
+            }
+            
+            // Main rotating spokes (first set) - RESTORE BLUE COLORS
+            for (let spoke = 0; spoke < 12; spoke++) {
+                push();
+                rotate((30 * spoke) * PI / 180);
+                rotate((-rotationCounter / 12.0) * PI / 180);
+                
+                translate(200, 0);
+                
+                for (let i = 0; i < 20; i++) {
+                    push();
+                    
+                    // FIXED: Restore original blue color pattern
+                    if (i % 2 == 0) {
+                        stroke(0, radiusValues[i] * 5 / 3, 255, alpha); // Blue pattern
+                    } else {
+                        stroke(radiusValues[i] * 5 / 3, 0, 255, alpha); // Purple-blue pattern
+                    }
+                    
+                    strokeWeight(2); // Back to original thickness
+                    noFill();
+                    
+                    let xPos = radiusValues[i] * 5 + 50 * (i + 1);
+                    let yPos = 50 * (i + 1);
+                    
+                    translate(xPos, yPos);
+                    rect(-radiusValues[i]/2, -radiusValues[i]/2, radiusValues[i], radiusValues[i]);
+                    
+                    pop();
+                }
+                
+                pop();
+            }
+            
+            // Second set rotating opposite direction - RESTORE BLUE COLORS
+            for (let spoke = 0; spoke < 12; spoke++) {
+                push();
+                rotate((30 * spoke) * PI / 180);
+                rotate((rotationCounter / 12.0) * PI / 180);
+                
+                translate(200, 0);
+                
+                for (let i = 0; i < 20; i++) {
+                    push();
+                    
+                    // FIXED: Restore original blue color pattern
+                    if (i % 2 == 0) {
+                        stroke(0, radiusValues[19-i] * 5 / 3, 255, alpha);
+                    } else {
+                        stroke(radiusValues[19-i] * 5 / 3, 0, 255, alpha);
+                    }
+                    
+                    strokeWeight(2); // Back to original thickness
+                    noFill();
+                    
+                    let xPos = -radiusValues[i] * 5 + 50 * (i + 1);
+                    let yPos = 50 * (i + 1);
+                    
+                    translate(xPos, yPos);
+                    rect(-radiusValues[19-i]/4, -radiusValues[19-i]/4, radiusValues[19-i]/2, radiusValues[19-i]/2);
+                    
+                    pop();
+                }
+                
+                pop();
+            }
+            
+            // Central ring structure (background arms) - RESTORE BLUE COLORS
+            push();
+            rotate((rotationCounter / 4.0) * PI / 180);
+            
+            for (let ring = 6; ring < 24; ring++) {
+                push();
+                rotate((360.0 / 18 * ring) * PI / 180);
+                
+                for (let elem = 0; elem < 6; elem++) {
+                    push();
+                    
+                    // FIXED: Restore original blue color pattern
+                    if (elem % 2 == 0) {
+                        stroke(ring, radiusValues[elem] * 5 / 3, 255, alpha);
+                    } else {
+                        stroke(radiusValues[elem] * 5 / 3, ring, 255, alpha);
+                    }
+                    
+                    strokeWeight(2);
+                    noFill();
+                    
+                    let armDistance = -radiusValues[elem] * 5;
+                    translate(0, armDistance);
+                    
+                    let size = (elem == 4) ? 40 * 3 : radiusValues[elem] / (elem + 5) * 3;
+                    
+                    rect(-size/2, -size/2, size, size);
+                    
+                    pop();
+                }
+                
+                pop();
+            }
+            
+            pop();
+            
+            pop();
+        }
+
+        function drawInteractiveButton() {
+            let buttonSize = 200;
+            let distance = dist(mouseX, mouseY, width/2, height/2);
+            let isHovering = distance < buttonSize/2;
+            
+            // Scale down during transition - renamed to avoid conflict
+            let buttonScaleValue = 1.0;
+            if (transitioning) {
+                let elapsed = millis() - transitionStartTime;
+                buttonScaleValue = map(elapsed, 0, 500, 1.0, 0); // Shrink over 0.5 seconds
+                buttonScaleValue = constrain(buttonScaleValue, 0, 1.0);
+            }
+            
+            push();
+            translate(width/2, height/2);
+            scale(buttonScaleValue);
+            noStroke();
+            
+            if (isHovering) {
+                fill(100, 255, 100); // Green on hover
+            } else {
+                fill(255, 100, 100); // Pink normally
+            }
+            
+            ellipse(0, 0, buttonSize, buttonSize);
+            
+            fill(255);
+            textAlign(CENTER, CENTER);
+            textSize(32);
+            text("CLICK ME", 0, 0);
+            pop();
+        }
+
+        function drawFinalWindow() {
+            push();
+            translate(width/2, height/2);
+            
+            // Elegant dark background with subtle gradient effect
+            fill(15, 15, 25, 240);
+            stroke(0, 150, 255, 150);
+            strokeWeight(2);
+            rectMode(CENTER);
+            rect(0, 0, width, height);
+            
+            // Add subtle animated background pattern
+            for (let i = 0; i < 50; i++) {
+                let x = (noise(i * 0.1, frameCount * 0.01) - 0.5) * width;
+                let y = (noise(i * 0.1 + 100, frameCount * 0.01) - 0.5) * height;
+                let alpha = noise(i * 0.1 + 200, frameCount * 0.02) * 30;
+                
+                fill(0, 150, 255, alpha);
+                noStroke();
+                ellipse(x, y, 2, 2);
+            }
+            
+            // Hero Section
+            fill(255, 255, 255);
+            textAlign(CENTER, CENTER);
+            textSize(48);
+            text("Creative Web Developer", 0, -120);
+            
+            // Animated underline
+            let underlineWidth = map(sin(frameCount * 0.05), -1, 1, 200, 300);
+            stroke(0, 200, 255);
+            strokeWeight(3);
+            line(-underlineWidth/2, -90, underlineWidth/2, -90);
+            
+            // Portfolio sections
+            let sections = [
+                { title: "Interactive Experiences", desc: "Immersive web applications with real-time audio visualization" },
+                { title: "Creative Coding", desc: "Generative art and algorithmic design using Processing & P5.js" },
+                { title: "Full-Stack Development", desc: "Modern web applications with cutting-edge technologies" }
+            ];
+            
+            for (let i = 0; i < sections.length; i++) {
+                let yPos = -20 + i * 80;
+                let isHovered = dist(mouseX - width/2, mouseY - height/2, 0, yPos) < 200;
+                
+                // Section background
+                if (isHovered) {
+                    fill(0, 150, 255, 30);
+                    stroke(0, 200, 255, 100);
+                    strokeWeight(2);
+                    rectMode(CENTER);
+                    rect(0, yPos, 400, 60, 10);
+                }
+                
+                // Section title
+                fill(isHovered ? color(255, 255, 255) : color(150, 220, 255));
+                textSize(20);
+                text(sections[i].title, 0, yPos - 15);
+                
+                // Section description
+                fill(isHovered ? color(200, 200, 200) : color(120, 120, 120));
+                textSize(14);
+                text(sections[i].desc, 0, yPos + 5);
+            }
+            
+            // Contact/Action buttons
+            let buttons = [
+                { label: "View Portfolio", x: -120, color: color(0, 200, 255) },
+                { label: "Contact Me", x: 0, color: color(255, 100, 100) },
+                { label: "Download CV", x: 120, color: color(100, 255, 150) }
+            ];
+            
+            for (let btn of buttons) {
+                let isHovered = dist(mouseX - width/2, mouseY - height/2, btn.x, 180) < 50;
+                
+                // Button background
+                fill(isHovered ? btn.color : color(red(btn.color), green(btn.color), blue(btn.color), 100));
+                stroke(btn.color);
+                strokeWeight(isHovered ? 3 : 2);
+                rectMode(CENTER);
+                rect(btn.x, 180, 100, 35, 20);
+                
+                // Button text
+                fill(isHovered ? color(255) : btn.color);
+                textSize(12);
+                text(btn.label, btn.x, 180);
+            }
+            
+            // Footer
+            fill(100, 100, 100);
+            textSize(10);
+            text("Built with P5.js • Interactive Audio Visualization • 2025", 0, height/2 - 30);
+            
+            pop();
+        }
+
+        function drawEnterButton() {
+            // Check if mouse is over button - FIX for WEBGL coordinates
+            let buttonSize = 120;
+            let centerX = width/2;
+            let centerY = height/2;
+            let distance = dist(mouseX, mouseY, centerX, centerY);
+            mouseOverButton = distance < buttonSize/2;
+            
+            // Debug - let's see what's happening
+            if (frameCount % 60 === 0) {
+                console.log("Mouse:", mouseX, mouseY, "Center:", centerX, centerY, "Distance:", distance, "Over button:", mouseOverButton);
+            }
+            
+            // Update animations
+            buttonPulse += 0.05;
+            redButtonPulse += 0.08;
+            
+            // Spin the button (stops when hovering)
+            if (!mouseOverButton) {
+                buttonSpin += 2;
+            }
+            
+            // Scale effects - MUCH more dramatic
+            let baseScale = mouseOverButton ? 1.8 : 1.0;
+            buttonScale = lerp(buttonScale, baseScale, 0.15);
+            
+            push();
+            translate(0, 0, 5000); // Bring to front
+            scale(buttonScale);
+            
+            // Outer blue button (spinning dashed circle)
+            push();
+            rotateZ(radians(buttonSpin));
+            
+            // Draw dashed circle
+            stroke(mouseOverButton ? color(0, 255, 100) : color(0, 150, 255));
+            strokeWeight(mouseOverButton ? 6 : 4);
+            noFill();
+            
+            // Create dashed effect by drawing arcs
+            let numDashes = 16;
+            let dashAngle = 360.0 / numDashes;
+            let gapAngle = dashAngle * 0.4;
+            
+            for (let i = 0; i < numDashes; i++) {
+                let startAngle = i * dashAngle;
+                let endAngle = startAngle + dashAngle - gapAngle;
+                arc(0, 0, buttonSize, buttonSize, radians(startAngle), radians(endAngle));
+            }
+            
+            pop();
+            
+            // Inner button
+            let innerScale = 1.0 + sin(redButtonPulse) * 0.1;
+            let buttonColor = mouseOverButton ? color(0, 255, 200) : color(0, 180, 255);
+            let alpha = map(sin(redButtonPulse * 0.6), -1, 1, 180, 255);
+            
+            fill(red(buttonColor), green(buttonColor), blue(buttonColor), alpha);
+            stroke(0, 100, 150);
+            strokeWeight(2);
+            let innerButtonSize = 80 * innerScale;
+            ellipse(0, 0, innerButtonSize, innerButtonSize);
+            
+            // Inner darker circle for depth
+            fill(0, 100, 150, alpha * 0.6);
+            noStroke();
+            ellipse(0, 0, innerButtonSize * 0.7, innerButtonSize * 0.7);
+            
+            // Display SVG logo
+            if (logo) {
+                push();
+                
+                // Scale the logo based on hover state
+                let logoScale = mouseOverButton ? 1.3 : 1.0;
+                scale(logoScale);
+                
+                // Apply color tint based on hover state
+                if (mouseOverButton) {
+                    tint(255, 255, 255); // Bright white on hover
+                } else {
+                    tint(200, 240, 255); // Light cyan normally
+                }
+                
+                // Maintain proper aspect ratio: 469.2162 x 158.6699 (about 3:1)
+                let logoWidth = 48;
+                let logoHeight = logoWidth * (158.6699 / 469.2162);
+                
+                imageMode(CENTER);
+                image(logo, 0, 0, logoWidth, logoHeight);
+                
+                // Reset tint
+                noTint();
+                
+                pop();
+            } else {
+                // Show "CWD" text if no logo
+                fill(mouseOverButton ? color(255, 255, 255) : color(200, 240, 255));
+                textAlign(CENTER, CENTER);
+                textSize(mouseOverButton ? 28 : 24);
+                text("CWD", 0, 0);
+            }
+            
+            // Add subtle glow when hovering
+            if (mouseOverButton) {
+                fill(0, 255, 200, 30);
+                noStroke();
+                ellipse(0, 0, buttonSize * 1.5, buttonSize * 1.5);
+            }
+            
+            pop();
+        }
+
+        function handleTransition() {
+            let elapsed = millis() - transitionStartTime;
+            
+            if (elapsed > 1000) {
+                let windowGrowTime = elapsed - 1000;
+                windowScale = map(windowGrowTime, 0, 1500, 0, 1);
+                windowScale = constrain(windowScale, 0, 1);
+                
+                // Smoothstep easing
+                windowScale = windowScale * windowScale * (3.0 - 2.0 * windowScale);
+                
+                if (windowScale >= 1.0) {
+                    completeTransition();
+                }
+            }
+        }
+
+        function drawExpandingWindow() {
+            push();
+            translate(width/2, height/2); // Center the window growth
+            
+            // Calculate window size
+            let windowWidth = width * windowScale;
+            let windowHeight = height * windowScale;
+            
+            // Window background
+            fill(20, 20, 40, 200);
+            stroke(0, 150, 255);
+            strokeWeight(2);
+            rectMode(CENTER);
+            rect(0, 0, windowWidth, windowHeight);
+            
+            // Window content (appears as window grows)
+            if (windowScale > 0.5) {
+                let contentAlpha = map(windowScale, 0.5, 1.0, 0, 255);
+                
+                fill(255, contentAlpha);
+                textAlign(CENTER, CENTER);
+                textSize(48);
+                text("Welcome", 0, -80);
+                
+                textSize(24);
+                text("Your journey begins here...", 0, -20);
+                
+                // Continue button
+                if (windowScale > 0.8) {
+                    fill(0, 150, 255, contentAlpha);
+                    stroke(0, 200, 255, contentAlpha);
+                    strokeWeight(2);
+                    rectMode(CENTER);
+                    rect(0, 60, 160, 40);
+                    
+                    fill(255, contentAlpha);
+                    textSize(18);
+                    text("Continue", 0, 60);
+                }
+            }
+            
+            pop();
+        }
+
+        function startTransition() {
+            transitioning = true;
+            transitionStartTime = millis();
+            showEnterButton = false;
+            playing = false;
+            
+            // Stop audio if playing
+            if (song && song.isPlaying()) {
+                song.pause();
+            }
+            musicStopped = true;
+        }
+
+        function completeTransition() {
+            transitioning = false;
+            showEnterButton = true;
+            windowScale = 0;
+            playing = true;
+            
+            // Restart audio if available
+            if (audioStarted && song) {
+                song.loop();
+            }
+            musicStopped = false;
+        }
+
+        function drawAudioStartButton() {
+            push();
+            translate(0, 0, 5000);
+            
+            fill(255, 100, 100);
+            stroke(255, 150, 150);
+            strokeWeight(2);
+            rect(-50, -100, 100, 30);
+            
+            fill(255);
+            textAlign(CENTER, CENTER);
+            textSize(12);
+            text("Click to Start Audio", 0, -85);
+            
+            pop();
+        }
+
+        function keyPressed() {
+            if (key === ' ' || keyCode === ENTER) {
+                if (showPlayButton) {
+                    startVisualizer();
+                } else if (showEnterButton && !transitioning) {
+                    startTransition();
+                }
+            }
+        }
+
+        function drawBeautifulButton() {
+            // Check if mouse is over button 
+            let buttonSize = 120;
+            let distance = dist(mouseX, mouseY, width/2, height/2);
+            let isHovering = distance < buttonSize/2;
+            
+            // Update animations
+            buttonPulse += 0.05;
+            redButtonPulse += 0.08;
+            
+            // Spin the button (stops when hovering)
+            if (!isHovering) {
+                buttonSpin += 2;
+            }
+            
+            // Scale effects - dramatic
+            let baseScale = isHovering ? 1.8 : 1.0;
+            buttonScale = lerp(buttonScale, baseScale, 0.15);
+            
+            // Scale down during transition
+            let transitionScale = 1.0;
+            if (transitioning) {
+                let elapsed = millis() - transitionStartTime;
+                transitionScale = map(elapsed, 0, 500, 1.0, 0);
+                transitionScale = constrain(transitionScale, 0, 1.0);
+            }
+            
+            push();
+            translate(width/2, height/2);
+            scale(buttonScale * transitionScale);
+            
+            // Outer spinning dashed circle
+            push();
+            rotate(buttonSpin * PI / 180);
+            
+            // Draw dashed circle
+            stroke(isHovering ? color(0, 255, 100) : color(0, 150, 255));
+            strokeWeight(isHovering ? 6 : 4);
+            noFill();
+            
+            // Create dashed effect by drawing arcs
+            let numDashes = 16;
+            let dashAngle = 360.0 / numDashes;
+            let gapAngle = dashAngle * 0.4;
+            
+            for (let i = 0; i < numDashes; i++) {
+                let startAngle = i * dashAngle;
+                let endAngle = startAngle + dashAngle - gapAngle;
+                arc(0, 0, buttonSize, buttonSize, radians(startAngle), radians(endAngle));
+            }
+            
+            pop();
+            
+            // Inner pulsating button
+            let innerScale = 1.0 + sin(redButtonPulse) * 0.1;
+            let buttonColor = isHovering ? color(0, 255, 200) : color(0, 180, 255);
+            let alpha = map(sin(redButtonPulse * 0.6), -1, 1, 180, 255);
+            
+            fill(red(buttonColor), green(buttonColor), blue(buttonColor), alpha);
+            stroke(0, 100, 150);
+            strokeWeight(2);
+            let innerButtonSize = 80 * innerScale;
+            ellipse(0, 0, innerButtonSize, innerButtonSize);
+            
+            // Inner darker circle for depth
+            fill(0, 100, 150, alpha * 0.6);
+            noStroke();
+            ellipse(0, 0, innerButtonSize * 0.7, innerButtonSize * 0.7);
+            
+            // Add subtle glow when hovering
+            if (isHovering) {
+                fill(0, 255, 200, 30);
+                noStroke();
+                ellipse(0, 0, buttonSize * 1.5, buttonSize * 1.5);
+            }
+            
+            pop(); // End of main button scaling
+            
+            // DRAW LOGO AT THE VERY FRONT with maximum Z-depth
+            push();
+            translate(width/2, height/2, 10000); // WAY in front
+            scale(buttonScale * transitionScale); // Apply same scaling as button
+            
+            // Draw PNG logo with perfect tinting control
+            if (logo) {
+                push();
+                
+                // Scale the logo based on hover state
+                let logoScale = isHovering ? 1.3 : 1.0;
+                scale(logoScale);
+                
+                // Perfect PNG tinting - this should work great!
+                if (isHovering) {
+                    tint(255, 255, 255, 255); // Pure white on hover
+                } else {
+                    tint(150, 220, 255, 255); // Light blue normally
+                }
+                
+                // Use the logo's actual aspect ratio
+                let logoWidth = 60;
+                let logoHeight = logoWidth * (logo.height / logo.width); // Maintain aspect ratio
+                
+                imageMode(CENTER);
+                image(logo, 0, 0, logoWidth, logoHeight);
+                
+                // Reset tint
+                noTint();
+                
+                pop();
+                
+                console.log("✨ PNG logo drawn with perfect color control!");
+                
+            } else {
+                // Fallback to styled text
+                push();
+                
+                let textScale = isHovering ? 1.3 : 1.0;
+                scale(textScale);
+                
+                textAlign(CENTER, CENTER);
+                textSize(24);
+                
+                if (isHovering) {
+                    fill(255, 255, 255);
+                    stroke(255, 255, 255, 150);
+                    strokeWeight(1);
+                } else {
+                    fill(150, 220, 255);
+                    stroke(100, 180, 255, 100);
+                    strokeWeight(0.5);
+                }
+                
+                text("CWD", 0, 0);
+                
+                pop();
+                
+                console.log("Using text fallback - logo not loaded");
+            }
+            
+            pop(); // End of logo section
+        }
+
+        // Old mousePressed function removed - using canvas.mousePressed instead
+
+        function startVisualizer() {
+            if (song && !audioStarted) {
+                try {
+                    song.loop();
+                    audioStarted = true;
+                    fft.setInput(song);
+                } catch(e) {
+                    console.log("Could not start audio");
+                }
+            }
+            visualizerStarted = true;
+            showPlayButton = false;
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+        }
+
+        // Utility functions
+        function abs(x) {
+            return Math.abs(x);
+        }
+
+        function radians(degrees) {
+            return degrees * (Math.PI / 180);
+        }
+    </script>
+</body>
+</html>
